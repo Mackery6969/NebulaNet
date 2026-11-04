@@ -1,7 +1,8 @@
 // NebulaNet's protocol: what a host and a joiner send, checked before anything else sees it. Pure functions with no
 // Cloudflare APIs, so the tests run them under plain Node.
 //
-// A host keeps a WebSocket open to /v1/host for as long as its room is open:
+// A host keeps a WebSocket open to /v1/host for as long as its room is open (/v1/host?code=K7QX2M after a dropped
+// connection asks for its code back):
 //   host -> NebulaNet  {"t":"open","game":"Nebula","version":"…","name":"…","players":1,"max":8,"candidates":[…]}
 //   NebulaNet -> host  {"t":"room","code":"K7QX2M"}
 //   NebulaNet -> host  {"t":"joiner","candidates":[…]}      someone is joining: punch toward these addresses

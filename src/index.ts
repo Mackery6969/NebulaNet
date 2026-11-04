@@ -13,6 +13,7 @@ import {
   hasRoom,
   joinAnswer,
   makeCode,
+  normalizeCode,
   parseHostMessage,
   parseJoinRequest,
 } from "./protocol.ts";
@@ -142,8 +143,11 @@ async function hostRoom(request: Request, env: Env): Promise<Response> {
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     return json({ error: "websocket_expected" }, 426);
   }
+  // A host that lost its connection asks for its code back (?code=), so the code its friends have keeps working;
+  // it gets it unless another room took it meanwhile.
+  const wanted = normalizeCode(new URL(request.url).searchParams.get("code"));
   for (let i = 0; i < CODE_TRIES; ++i) {
-    const code = makeCode((bytes) => crypto.getRandomValues(bytes));
+    const code = i === 0 && wanted !== null ? wanted : makeCode((bytes) => crypto.getRandomValues(bytes));
     const room = env.ROOMS.get(env.ROOMS.idFromName(code));
     const headers = new Headers(request.headers);
     headers.set("x-nebulanet-code", code);

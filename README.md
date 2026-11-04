@@ -21,7 +21,8 @@ The full message list is at the top of [`src/protocol.ts`](src/protocol.ts). In 
 
 - `GET /v1/host`, a WebSocket kept open while the room is open. The host sends `open` (game, version, name, players,
   max, candidates) and gets `room` with the code; NebulaNet sends `joiner` with a joiner's candidates; the host sends
-  `update` when its player count changes; `ping` is answered `pong`. The room ends when the socket closes.
+  `update` when its player count changes; `ping` is answered `pong`. The room ends when the socket closes. A host
+  whose connection dropped reconnects with `?code=` to get the same code back while no other room has taken it.
 - `POST /v1/join` with `{"code","candidates"}` answers the room's name, version, players, max and the host's
   candidates, or `404 not_found`, `409 full`, `400 bad_request`, `429 busy`.
 
