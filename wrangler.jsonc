@@ -1,0 +1,12 @@
+{
+  // NebulaNet on Cloudflare Workers (README.md, "Deploying").
+  "name": "nebulanet",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "RoomObject" }]
+  },
+  // SQLite-backed Durable Objects work on the Workers free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomObject"] }],
+  "observability": { "enabled": true }
+}
