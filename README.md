@@ -42,9 +42,9 @@ npm run dev     # the Worker locally on http://127.0.0.1:8787
 
 ## Deploying
 
-Merging to `main` deploys through GitHub Actions (`.github/workflows/deploy.yml`) once the repository has two secrets:
-`CLOUDFLARE_API_TOKEN` (a token made from the "Edit Cloudflare Workers" template, with the `mackery.com` zone
-included) and `CLOUDFLARE_ACCOUNT_ID`. By hand:
+Cloudflare deploys it from GitHub by itself (Workers Builds), with no API token to make: in the Cloudflare dashboard,
+Workers & Pages, Create, Import a repository, pick this repository, keep the deploy command `npx wrangler deploy`, and
+save. Every push to `main` deploys from then on. By hand instead:
 
 ```sh
 npx wrangler login
