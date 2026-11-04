@@ -47,9 +47,9 @@ npx wrangler login
 npm run deploy
 ```
 
-This makes `nebulanet.<your-subdomain>.workers.dev`. A custom domain (for example `net.example.com`) can be added in
-the Cloudflare dashboard under the Worker's Settings, Domains & Routes. Nebula's `coop_nebulanet` setting points at
-whichever address is used.
+It answers at `https://nebulanet.mackery.com` (the custom domain in `wrangler.jsonc`; `mackery.com` has to be a zone
+on the same Cloudflare account, and deploying adds the DNS record) and at `nebulanet.<your-subdomain>.workers.dev`.
+That address is Nebula's default; its `coop_nebulanet` setting points a game at another NebulaNet.
 
 ## Coming next
 
