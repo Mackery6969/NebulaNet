@@ -1,0 +1,18 @@
+{
+  "name": "nebulanet",
+  "private": true,
+  "description": "Online services for Nebula co-op: room codes and the address swap for NAT traversal",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc",
+    "test": "node --experimental-strip-types --no-warnings --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.150.0"
+  }
+}
