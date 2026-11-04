@@ -42,6 +42,10 @@ npm run dev     # the Worker locally on http://127.0.0.1:8787
 
 ## Deploying
 
+Merging to `main` deploys through GitHub Actions (`.github/workflows/deploy.yml`) once the repository has two secrets:
+`CLOUDFLARE_API_TOKEN` (a token made from the "Edit Cloudflare Workers" template, with the `mackery.com` zone
+included) and `CLOUDFLARE_ACCOUNT_ID`. By hand:
+
 ```sh
 npx wrangler login
 npm run deploy
