@@ -22,7 +22,7 @@ NebulaNet is sm64coopdx's CoopNet made for Nebula, on Cloudflare instead of a se
 | CoopNet | NebulaNet |
 | --- | --- |
 | Lobbies with game, version, host name, mode, description, password, max players (`LOBBY_CREATE`) | Rooms with the same (`open`), each named by a 6-character code |
-| Lobby list by game, public ones or private ones by their password (`LOBBY_LIST_GET`) | `POST /v1/list`, the same rule |
+| Private lobbies, found by their password (`LOBBY_LIST_GET` with a password) | `POST /v1/list` with the password. There is no public list: a room without a password is joined by its code |
 | The owner updates its lobby (`LOBBY_UPDATE`) | The host sends `update` (players, name, mode, description) |
 | Join errors: not found, full, wrong password, old CoopNet (`MERR_*`) | `404 not_found`, `409 full`, `403 wrong_password`, `426 old_game` |
 | STUN and TURN servers handed out (`STUN_TURN`, `turn-servers.cfg`) | `ice` in `room` and the join's answer, from `STUN_SERVERS`, `TURN_SERVERS` or a Cloudflare TURN key |
@@ -48,22 +48,32 @@ The full message list is at the top of [`src/protocol.ts`](src/protocol.ts). In 
 - `POST /v1/join` with `{"code","candidates","password","protocol"}` answers the room's name, version, mode,
   description, players, max, the host's candidates and the `ice` servers, or `404 not_found`, `409 full`,
   `403 wrong_password`, `426 old_game`, `400 bad_request`, `429 busy`.
-- `POST /v1/list` with `{"game","password"}` answers `{"rooms":[…]}`: with no password the public rooms, with one
-  the private rooms that have it. Rooms never show their addresses there.
+- `POST /v1/list` with `{"game","password"}` answers `{"rooms":[…]}`: the private rooms that have the password (none
+  without one). Rooms never show their addresses there.
 - `POST /v1/report` with `{"code","ok","candidates"}`: how a join went.
 - `GET /v1/stats`: rooms and players open now, the most at once each hour (48 hours) and day (30 days), and the joins
   made and failed in each.
 
-Protocol 1 games still work: what they leave out reads as empty, and their rooms are public.
+Protocol 1 games still work: what they leave out reads as empty, so their rooms have no password and are joined by
+code.
 
 A candidate is `"1.2.3.4:5678"` or `"[2001:db8::1]:5678"`. Codes are 6 characters from
 `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (no 0/O or 1/I), with case and dashes ignored.
 
 Each room is a Durable Object named by its code. The host's socket uses the WebSocket hibernation API, so an open room
-that nobody is joining costs nothing while it waits; every 3 minutes it wakes to check its host and refresh its place
-in the list. The list and the numbers are one more Durable Object, `LobbyDirectory` (`src/directory.ts`), which drops
-a room it hasn't heard from for 11 minutes. Joins are limited to 30 a minute per room (so are a password's guesses),
+that nobody is joining costs nothing while it waits; every 5 minutes it wakes to check its host and, for a private
+room, refresh its place in the list. The list and the numbers are one more Durable Object, `LobbyDirectory`
+(`src/directory.ts`), which drops a room it hasn't heard from for 16 minutes. Joins are limited to 30 a minute per room (so are a password's guesses),
 lists to 30 a minute per address. Passwords are kept only as hashes.
+
+## Cost
+
+NebulaNet fits Cloudflare's Workers Free plan, with no card needed. Over a free limit, requests fail until the daily
+reset (00:00 UTC); nothing is billed. Each open room wakes every 5 minutes (about 12 Durable Object requests and 12
+rows written an hour, twice that for a private room, which also refreshes its listing), well inside the free plan's
+100,000 requests and 100,000 rows written a day. Pings cost nothing: Cloudflare answers them without waking the room.
+Game traffic never passes through NebulaNet. Only TURN relays could cost money, and none are handed out until a TURN
+secret is set.
 
 ## TURN relays
 

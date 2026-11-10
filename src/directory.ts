@@ -1,11 +1,12 @@
-// The room list (CoopNet's LOBBY_LIST_GET) and NebulaNet's numbers (CoopNet's metrics): one Durable Object that every
-// room tells when it opens, changes and closes. A room it hasn't heard from for EXPIRE_MS is taken off, so a room
+// The room list (CoopNet's LOBBY_LIST_GET, its private lobbies) and NebulaNet's numbers (CoopNet's metrics): one
+// Durable Object that every private room tells when it opens, changes and closes. Rooms without a password aren't
+// listed at all: they are joined by their code. A room it hasn't heard from for EXPIRE_MS is taken off, so a room
 // whose Durable Object went away without saying so doesn't stay listed.
 import { DurableObject } from "cloudflare:workers";
 import { type ListedRoom, sortListed } from "./protocol.ts";
 
 // A listed room refreshes its entry every REFRESH_MS (index.ts); this many missed refreshes and it's gone.
-export const EXPIRE_MS = 11 * 60_000;
+export const EXPIRE_MS = 16 * 60_000;
 // Lists one address may ask for a minute.
 const LISTS_PER_MINUTE = 30;
 // How long the numbers are kept.

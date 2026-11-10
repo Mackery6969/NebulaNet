@@ -52,7 +52,8 @@ const OPEN_WITHIN_MS = 15_000;
 // CoopNet's keepalive: a host's game pings every 30 s; one not heard from for this long is gone.
 const DEAD_AFTER_MS = 240_000;
 // How often an open room checks its host is still there and refreshes its place in the list (directory.ts EXPIRE_MS).
-const REFRESH_MS = 180_000;
+// Every 5 minutes: NebulaNet stays well inside Cloudflare's free plan (each wake is a request and a row written).
+const REFRESH_MS = 300_000;
 const DEFAULT_STUN = "stun.cloudflare.com:3478";
 
 // What a host's socket keeps through hibernation.
@@ -176,8 +177,9 @@ export class RoomObject extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  // A private room's place in the list. A room without a password is only joined by its code, never listed.
   private async list(attachment: HostAttachment): Promise<void> {
-    if (attachment.room === null) return;
+    if (attachment.room === null || attachment.secret === "") return;
     await directory(this.env).put({
       room: listedRoom(attachment.code, attachment.room, attachment.secret !== ""),
       game: attachment.room.game,
@@ -200,7 +202,7 @@ export class RoomObject extends DurableObject<Env> {
     const pinged = this.ctx.getWebSocketAutoResponseTimestamp(host)?.getTime() ?? 0;
     if (now - Math.max(pinged, attachment.heard) > DEAD_AFTER_MS) {
       host.close(4003, "timed out");
-      await directory(this.env).remove(attachment.code);
+      if (attachment.secret !== "") await directory(this.env).remove(attachment.code);
       return;
     }
     await this.list(attachment);
@@ -247,8 +249,9 @@ export class RoomObject extends DurableObject<Env> {
   private async ended(socket: WebSocket): Promise<void> {
     const attachment = this.attachment(socket);
     // A host back for its code has a new socket by now; its listing stays.
-    if (attachment !== null && this.ctx.getWebSockets("host").every((other) => other === socket ||
-        other.readyState !== WebSocket.OPEN)) {
+    const alone = this.ctx.getWebSockets("host").every((other) => other === socket ||
+      other.readyState !== WebSocket.OPEN);
+    if (attachment !== null && attachment.secret !== "" && alone) {
       await directory(this.env).remove(attachment.code);
     }
   }
@@ -342,6 +345,8 @@ async function listRooms(request: Request, env: Env): Promise<Response> {
   const text = await body(request);
   const parsed = text === null ? null : parseListRequest(text);
   if (parsed === null) return json({ error: "bad_request" }, 400);
+  // Only private rooms are listed (CoopNet's private lobbies, found by their password): no password, no rooms.
+  if (parsed.password === "") return json({ rooms: [] });
   const asker = request.headers.get("cf-connecting-ip") ?? "";
   const rooms = await directory(env).list(parsed.game, await secretOf(parsed.password), await sha256(asker));
   return rooms === null ? json({ error: "busy" }, 429) : json({ rooms });
