@@ -1,7 +1,8 @@
 // NebulaNet's protocol: what a host and a joiner send, checked before anything else sees it. Pure functions with no
 // Cloudflare APIs, so the tests run them under plain Node. It offers what sm64coopdx's CoopNet offers its games, for
-// Nebula's star of players around a host: rooms with a name, mode, description and password, a list of the public
-// ones (and of the private ones by their password), the host's updates, and joins checked against all that.
+// Nebula's star of players around a host: rooms with a name, mode, description and password, the private ones
+// found by their password (CoopNet's private lobbies; rooms without one are joined by code only), the host's updates,
+// and joins checked against all that.
 //
 // A host keeps a WebSocket open to /v1/host for as long as its room is open (/v1/host?code=K7QX2M after a dropped
 // connection asks for its code back):
@@ -21,8 +22,8 @@
 //   404 {"error":"not_found"}, 409 {"error":"full"}, 403 {"error":"wrong_password"}, 426 {"error":"old_game"},
 //   400 {"error":"bad_request"}, 429 {"error":"busy"}
 // Anyone may list the rooms:
-//   POST /v1/list {"game":"Nebula","password":"…"}           no password: the public rooms; one: the private rooms
-//                                                            that have it (CoopNet's private lobbies)
+//   POST /v1/list {"game":"Nebula","password":"…"}           the private rooms that have the password (CoopNet's
+//                                                            private lobbies); no password: none
 //   200 {"rooms":[{"code","name","version","mode","description","players","max","private"}…]}
 //   POST /v1/report {"code":"K7QX2M","ok":false,"candidates":[…]}  how a join went (CoopNet's PEER_FAILED): the host
 //                                                            hears {"t":"joiner_failed","candidates":[…]}
