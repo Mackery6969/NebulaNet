@@ -1,7 +1,7 @@
 {
   "name": "nebulanet",
   "private": true,
-  "description": "Online services for Nebula co-op: room codes and the address swap for NAT traversal",
+  "description": "Online services for Nebula co-op, after sm64coopdx's CoopNet: rooms, a room list and the address swap for NAT traversal",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

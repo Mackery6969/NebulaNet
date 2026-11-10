@@ -7,9 +7,16 @@
   // Cloudflare account.
   "routes": [{ "pattern": "nebulanet.mackery.com", "custom_domain": true }],
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "RoomObject" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "RoomObject" },
+      // The room list and the numbers (src/directory.ts).
+      { "name": "LOBBIES", "class_name": "LobbyDirectory" }
+    ]
   },
   // SQLite-backed Durable Objects work on the Workers free plan.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomObject"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomObject"] },
+    { "tag": "v2", "new_sqlite_classes": ["LobbyDirectory"] }
+  ],
   "observability": { "enabled": true }
 }
