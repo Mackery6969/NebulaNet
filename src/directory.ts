@@ -1,23 +1,30 @@
-// The room list (CoopNet's LOBBY_LIST_GET, its private lobbies) and NebulaNet's numbers (CoopNet's metrics): one
-// Durable Object that every private room tells when it opens, changes and closes. Rooms without a password aren't
-// listed at all: they are joined by their code. A room it hasn't heard from for EXPIRE_MS is taken off, so a room
-// whose Durable Object went away without saying so doesn't stay listed.
+// The room list (CoopNet's LOBBY_LIST_GET: its public lobbies, and its private ones by their password) and
+// NebulaNet's numbers (CoopNet's metrics): one Durable Object that every listed room (a public one, or one with a
+// password) tells when it opens, changes and closes. A room that is neither isn't listed at all: it is joined by its
+// code. A room it hasn't heard from for EXPIRE_MS is taken off, so a room whose Durable Object went away without
+// saying so doesn't stay listed.
 import { DurableObject } from "cloudflare:workers";
 import { type ListedRoom, sortListed } from "./protocol.ts";
 
 // A listed room refreshes its entry every REFRESH_MS (index.ts); this many missed refreshes and it's gone.
 export const EXPIRE_MS = 16 * 60_000;
+// Public rooms one address may have in the list at once (a household's games, not a flood); its others are joined
+// by their code.
+export const PUBLIC_PER_ADDRESS = 4;
 // Lists one address may ask for a minute.
 const LISTS_PER_MINUTE = 30;
 // How long the numbers are kept.
 const KEEP_HOURS = 90 * 24;
 const HOUR_MS = 3_600_000;
 
-// What a room tells the directory. `secret` is its password's hash, "" for a public room.
+// What a room tells the directory. `secret` is its password's hash, "" for none; `everyone`: it asks to be in the
+// public list (locked when it has a secret too); `owner`: its host's address, hashed.
 export interface Entry {
   room: ListedRoom;
   game: string;
   secret: string;
+  everyone: boolean;
+  owner: string;
 }
 
 export interface Numbers {
@@ -47,20 +54,43 @@ export class LobbyDirectory extends DurableObject<Record<string, never>> {
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS rooms (
       code TEXT PRIMARY KEY, game TEXT NOT NULL, secret TEXT NOT NULL, room TEXT NOT NULL, players INTEGER NOT NULL,
       seen INTEGER NOT NULL)`);
+    // Public rooms came after the table did: a directory made before them gets their columns once.
+    for (const column of ["everyone INTEGER NOT NULL DEFAULT 0", "owner TEXT NOT NULL DEFAULT ''"]) {
+      try {
+        ctx.storage.sql.exec(`ALTER TABLE rooms ADD COLUMN ${column}`);
+      } catch {
+        // already there
+      }
+    }
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS hours (
       hour INTEGER PRIMARY KEY, rooms INTEGER NOT NULL, players INTEGER NOT NULL, joins INTEGER NOT NULL DEFAULT 0,
       failed INTEGER NOT NULL DEFAULT 0)`);
   }
 
-  // A room opened, changed or is still open.
-  put(entry: Entry): void {
+  // A room opened, changed or is still open. False when it asked to be public but its address already has
+  // PUBLIC_PER_ADDRESS public rooms: it stays out of the public list (and in the password's, when it has one).
+  put(entry: Entry): boolean {
     const now = Date.now();
+    this.expire(now);
+    let everyone = entry.everyone;
+    if (everyone && entry.owner !== "") {
+      const others = this.ctx.storage.sql.exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM rooms WHERE owner = ? AND everyone = 1 AND code != ?",
+        entry.owner, entry.room.code).one().n;
+      everyone = others < PUBLIC_PER_ADDRESS;
+    }
+    if (!everyone && entry.secret === "") {
+      this.remove(entry.room.code);
+      return false;
+    }
     this.ctx.storage.sql.exec(
-      `INSERT INTO rooms (code, game, secret, room, players, seen) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(code) DO UPDATE SET game = excluded.game, secret = excluded.secret, room = excluded.room,
-       players = excluded.players, seen = excluded.seen`,
-      entry.room.code, entry.game, entry.secret, JSON.stringify(entry.room), entry.room.players, now);
+      `INSERT INTO rooms (code, game, secret, everyone, owner, room, players, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(code) DO UPDATE SET game = excluded.game, secret = excluded.secret, everyone = excluded.everyone,
+       owner = excluded.owner, room = excluded.room, players = excluded.players, seen = excluded.seen`,
+      entry.room.code, entry.game, entry.secret, everyone ? 1 : 0, entry.owner, JSON.stringify(entry.room),
+      entry.room.players, now);
     this.count(now);
+    return everyone === entry.everyone;
   }
 
   // A room closed.
@@ -68,8 +98,8 @@ export class LobbyDirectory extends DurableObject<Record<string, never>> {
     this.ctx.storage.sql.exec("DELETE FROM rooms WHERE code = ?", code);
   }
 
-  // The rooms of `game` with `secret` (a password's hash; "" for the public ones). Null when `asker` (an address)
-  // asked too often.
+  // The rooms of `game` with `secret` (a password's hash), or with "" the public ones. Null when `asker` (an
+  // address) asked too often.
   list(game: string, secret: string, asker: string): ListedRoom[] | null {
     const now = Date.now();
     const asked = (this.lists.get(asker) ?? []).filter((at) => now - at < 60_000);
@@ -78,8 +108,10 @@ export class LobbyDirectory extends DurableObject<Record<string, never>> {
     this.lists.set(asker, asked);
     if (this.lists.size > 10_000) this.lists.clear();  // memory stays bounded; the limit is a courtesy
     this.expire(now);
-    const rows = this.ctx.storage.sql.exec<{ room: string }>(
-      "SELECT room FROM rooms WHERE game = ? AND secret = ?", game, secret).toArray();
+    const rows = (secret === ""
+      ? this.ctx.storage.sql.exec<{ room: string }>("SELECT room FROM rooms WHERE game = ? AND everyone = 1", game)
+      : this.ctx.storage.sql.exec<{ room: string }>(
+        "SELECT room FROM rooms WHERE game = ? AND secret = ?", game, secret)).toArray();
     return sortListed(rows.map((row) => JSON.parse(row.room) as ListedRoom));
   }
 
