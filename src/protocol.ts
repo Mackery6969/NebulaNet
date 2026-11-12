@@ -1,15 +1,18 @@
 // NebulaNet's protocol: what a host and a joiner send, checked before anything else sees it. Pure functions with no
 // Cloudflare APIs, so the tests run them under plain Node. It offers what sm64coopdx's CoopNet offers its games, for
-// Nebula's star of players around a host: rooms with a name, mode, description and password, the private ones
-// found by their password (CoopNet's private lobbies; rooms without one are joined by code only), the host's updates,
-// and joins checked against all that.
+// Nebula's star of players around a host: rooms with a name, mode, description and password, a list of the public
+// ones (CoopNet's public lobbies) and the private ones found by their password (its private lobbies), the host's
+// updates, and joins checked against all that. A room that is neither public nor has a password is joined by its
+// code only.
 //
 // A host keeps a WebSocket open to /v1/host for as long as its room is open (/v1/host?code=K7QX2M after a dropped
 // connection asks for its code back):
 //   host -> NebulaNet  {"t":"open","protocol":2,"game":"Nebula","version":"…","name":"…","mode":"…",
-//                       "description":"…","password":"…","players":1,"max":8,"candidates":[…]}
-//                       (mode, description and password may be left out; a password makes the room private)
-//   NebulaNet -> host  {"t":"room","code":"K7QX2M","protocol":2}
+//                       "description":"…","password":"…","public":true,"players":1,"max":8,"candidates":[…]}
+//                       (mode, description, password and public may be left out. "public": in everyone's list,
+//                       locked when it has a password too; a password: found by it; neither: joined by code only)
+//   NebulaNet -> host  {"t":"room","code":"K7QX2M","protocol":2,"public":true}  public: in everyone's list (false when
+//                                                            its address already has too many public rooms there)
 //   NebulaNet -> host  {"t":"joiner","candidates":[…]}      someone is joining: punch toward these addresses
 //   host -> NebulaNet  {"t":"update","players":3,"name":"…","mode":"…","description":"…"}  any of them, changed
 //   NebulaNet -> host  {"t":"error","error":"…"}            then the socket closes
@@ -20,10 +23,11 @@
 //   200 {"name":"…","game":"Nebula","version":"…","mode":"…","description":"…","players":3,"max":8,
 //        "candidates":[…]}                                   the host's addresses
 //   404 {"error":"not_found"}, 409 {"error":"full"}, 403 {"error":"wrong_password"}, 426 {"error":"old_game"},
+//   (a room without a password takes any password, as its host does)
 //   400 {"error":"bad_request"}, 429 {"error":"busy"}
 // Anyone may list the rooms:
-//   POST /v1/list {"game":"Nebula","password":"…"}           the private rooms that have the password (CoopNet's
-//                                                            private lobbies); no password: none
+//   POST /v1/list {"game":"Nebula"}                          the public rooms (CoopNet's public lobbies)
+//   POST /v1/list {"game":"Nebula","password":"…"}           the rooms that have the password (its private lobbies)
 //   200 {"rooms":[{"code","name","version","mode","description","players","max","private"}…]}
 //   POST /v1/report {"code":"K7QX2M","ok":false,"candidates":[…]}  how a join went (CoopNet's PEER_FAILED): the host
 //                                                            hears {"t":"joiner_failed","candidates":[…]}
@@ -192,7 +196,8 @@ export interface RoomUpdate {
 }
 
 export type HostMessage =
-  | { t: "open"; room: Room; password: string; protocol: number }
+  // listed: the host asked for the room to be in everyone's list ("public").
+  | { t: "open"; room: Room; password: string; protocol: number; listed: boolean }
   | { t: "update"; update: RoomUpdate };
 
 // A host's message, or null when it isn't a valid one.
@@ -212,7 +217,8 @@ export function parseHostMessage(raw: string): HostMessage | null {
     };
     const secret = password(message.password);
     const spoken = protocol(message.protocol);
-    if (max === null || players === null || room.game === null || room.version === null || room.name === null ||
+    const everyone = message.public === undefined ? false : typeof message.public === "boolean" ? message.public : null;
+    if (everyone === null || max === null || players === null || room.game === null || room.version === null || room.name === null ||
         room.mode === null || room.description === null || room.candidates === null || secret === null ||
         spoken === null) {
       return null;
@@ -231,6 +237,7 @@ export function parseHostMessage(raw: string): HostMessage | null {
       },
       password: secret,
       protocol: spoken,
+      listed: everyone,
     };
   }
   if (message.t === "update") {

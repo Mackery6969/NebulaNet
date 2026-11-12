@@ -1,7 +1,7 @@
 // NebulaNet: introduces Nebula co-op players so nobody forwards a port (Nebula's docs/COOP_PLAN.md, "Hosting"). It is
-// sm64coopdx's CoopNet made for Nebula: rooms (CoopNet's lobbies) with a name, mode, description and password, a list
-// of them, the host's updates, password and version checks, keepalives, failed joins reported back, STUN and TURN
-// servers handed out, and numbers on how much it's used. It never carries game traffic: Nebula's players form a star
+// sm64coopdx's CoopNet made for Nebula: rooms (CoopNet's lobbies) with a name, mode, description and password, lists
+// of them (the public ones, and the private ones by password), the host's updates, password and version checks,
+// keepalives, failed joins reported back, STUN and TURN servers handed out, and numbers on how much it's used. It never carries game traffic: Nebula's players form a star
 // around their host, so a joiner only ever needs the host's addresses and the host the joiner's, and both games
 // punch through their routers. See protocol.ts for the messages.
 //
@@ -63,6 +63,8 @@ interface HostAttachment {
   heard: number;   // when the host last sent a message (its pings are answered without one: see alarm())
   room: Room | null;
   secret: string;  // the room's password's hash, "" for none
+  everyone?: boolean;  // asked to be in the public list (left out by sockets accepted before public rooms: not)
+  owner?: string;      // the host's address, hashed: how many public rooms it has is limited (directory.ts)
 }
 
 // STUN and TURN servers as CoopNet's MPACKET_STUN_TURN hands them out.
@@ -86,6 +88,11 @@ async function sha256(text: string): Promise<string> {
 // A password's hash, as rooms and the list keep it ("" for none).
 async function secretOf(password: string): Promise<string> {
   return password === "" ? "" : sha256(`nebulanet room password\n${password}`);
+}
+
+// A room in the directory: public, or found by its password.
+function listed(attachment: HostAttachment): boolean {
+  return attachment.everyone === true || attachment.secret !== "";
 }
 
 function directory(env: Env): DurableObjectStub<LobbyDirectory> {
@@ -157,33 +164,38 @@ export class RoomObject extends DurableObject<Env> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const code = request.headers.get("x-nebulanet-code") ?? "";
-    if (url.pathname === "/host") return this.acceptHost(code);
+    if (url.pathname === "/host") return this.acceptHost(code, request.headers.get("x-nebulanet-owner") ?? "");
     if (url.pathname === "/join") return this.join(await request.text());
     if (url.pathname === "/report") return this.report(await request.text());
     return json({ error: "not_found" }, 404);
   }
 
-  private acceptHost(code: string): Response {
+  private acceptHost(code: string, owner: string): Response {
     // A code already in use: the Worker tries another.
     if (this.host() !== null) return json({ error: "taken" }, 409);
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server, ["host"]);
     const now = Date.now();
-    const attachment: HostAttachment = { code, opened: now, heard: now, room: null, secret: "" };
+    const attachment: HostAttachment = {
+      code, opened: now, heard: now, room: null, secret: "", everyone: false, owner,
+    };
     server.serializeAttachment(attachment);
     // A host that never says "open" is closed.
     void this.ctx.storage.setAlarm(now + OPEN_WITHIN_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // A private room's place in the list. A room without a password is only joined by its code, never listed.
-  private async list(attachment: HostAttachment): Promise<void> {
-    if (attachment.room === null || attachment.secret === "") return;
-    await directory(this.env).put({
+  // A public or private room's place in the list. A room that is neither is only joined by its code, never listed.
+  // False when it asked to be public and the list didn't take it as that (directory.ts PUBLIC_PER_ADDRESS).
+  private async list(attachment: HostAttachment): Promise<boolean> {
+    if (attachment.room === null || !listed(attachment)) return true;
+    return directory(this.env).put({
       room: listedRoom(attachment.code, attachment.room, attachment.secret !== ""),
       game: attachment.room.game,
       secret: attachment.secret,
+      everyone: attachment.everyone === true,
+      owner: attachment.owner ?? "",
     });
   }
 
@@ -202,7 +214,7 @@ export class RoomObject extends DurableObject<Env> {
     const pinged = this.ctx.getWebSocketAutoResponseTimestamp(host)?.getTime() ?? 0;
     if (now - Math.max(pinged, attachment.heard) > DEAD_AFTER_MS) {
       host.close(4003, "timed out");
-      if (attachment.secret !== "") await directory(this.env).remove(attachment.code);
+      if (listed(attachment)) await directory(this.env).remove(attachment.code);
       return;
     }
     await this.list(attachment);
@@ -225,14 +237,16 @@ export class RoomObject extends DurableObject<Env> {
       if (message.protocol < MIN_PROTOCOL) return this.refuse(socket, "old_game", 4004);
       attachment.room = message.room;
       attachment.secret = await secretOf(message.password);
+      attachment.everyone = message.listed;
       socket.serializeAttachment(attachment);
+      const shown = await this.list(attachment);
       socket.send(JSON.stringify({
         t: "room",
         code: attachment.code,
         protocol: PROTOCOL,
+        public: attachment.everyone && shown,
         ice: await iceServers(this.env),
       }));
-      await this.list(attachment);
       await this.ctx.storage.setAlarm(Date.now() + REFRESH_MS);
       return;
     }
@@ -251,7 +265,7 @@ export class RoomObject extends DurableObject<Env> {
     // A host back for its code has a new socket by now; its listing stays.
     const alone = this.ctx.getWebSockets("host").every((other) => other === socket ||
       other.readyState !== WebSocket.OPEN);
-    if (attachment !== null && attachment.secret !== "" && alone) {
+    if (attachment !== null && listed(attachment) && alone) {
       await directory(this.env).remove(attachment.code);
     }
   }
@@ -287,8 +301,11 @@ export class RoomObject extends DurableObject<Env> {
     this.joins = this.joins.filter((at) => now - at < 60_000);
     if (this.joins.length >= JOINS_PER_MINUTE) return json({ error: "busy" }, 429);
     this.joins.push(now);
-    // CoopNet's MERR_LOBBY_PASSWORD_INCORRECT. The host checks it again as the joiner says hello.
-    if (await secretOf(request.password) !== open.attachment.secret) return json({ error: "wrong_password" }, 403);
+    // CoopNet's MERR_LOBBY_PASSWORD_INCORRECT. The host checks it again as the joiner says hello. A room without a
+    // password takes any, as its host does (a public room picked while a password is typed for another).
+    if (open.attachment.secret !== "" && await secretOf(request.password) !== open.attachment.secret) {
+      return json({ error: "wrong_password" }, 403);
+    }
     if (!hasRoom(open.room)) return json({ error: "full" }, 409);
     // The host starts punching toward the joiner while the joiner starts saying hello.
     open.host.send(JSON.stringify({ t: "joiner", candidates: request.candidates }));
@@ -316,11 +333,13 @@ async function hostRoom(request: Request, env: Env): Promise<Response> {
   // A host that lost its connection asks for its code back (?code=), so the code its friends have keeps working;
   // it gets it unless another room took it meanwhile.
   const wanted = normalizeCode(new URL(request.url).searchParams.get("code"));
+  const owner = await sha256(request.headers.get("cf-connecting-ip") ?? "");
   for (let i = 0; i < CODE_TRIES; ++i) {
     const code = i === 0 && wanted !== null ? wanted : makeCode((bytes) => crypto.getRandomValues(bytes));
     const room = env.ROOMS.get(env.ROOMS.idFromName(code));
     const headers = new Headers(request.headers);
     headers.set("x-nebulanet-code", code);
+    headers.set("x-nebulanet-owner", owner);
     const answer = await room.fetch(new Request("https://room/host", { headers }));
     if (answer.status !== 409) return answer;
   }
@@ -345,8 +364,7 @@ async function listRooms(request: Request, env: Env): Promise<Response> {
   const text = await body(request);
   const parsed = text === null ? null : parseListRequest(text);
   if (parsed === null) return json({ error: "bad_request" }, 400);
-  // Only private rooms are listed (CoopNet's private lobbies, found by their password): no password, no rooms.
-  if (parsed.password === "") return json({ rooms: [] });
+  // No password: the public rooms (CoopNet's public lobbies). One: the rooms that have it (its private lobbies).
   const asker = request.headers.get("cf-connecting-ip") ?? "";
   const rooms = await directory(env).list(parsed.game, await secretOf(parsed.password), await sha256(asker));
   return rooms === null ? json({ error: "busy" }, 429) : json({ rooms });

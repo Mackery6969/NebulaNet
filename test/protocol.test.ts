@@ -71,6 +71,7 @@ test("a host opens a room and updates it", () => {
     },
     password: "",
     protocol: 1,
+    listed: false,
   }, "a protocol 1 game's open still works");
   const full = parseHostMessage(JSON.stringify({
     t: "open", protocol: 2, game: "Nebula", version: "1", name: "Room", mode: "CO-OP", description: "Mods: A",
@@ -81,6 +82,17 @@ test("a host opens a room and updates it", () => {
   assert.equal(full.room.mode, "CO-OP");
   assert.equal(full.room.description, "Mods: A");
   assert.equal(full.protocol, 2);
+  assert.equal(full.listed, false, "a room is public only when its host asks");
+  const open2 = (extra: Record<string, unknown>) => parseHostMessage(JSON.stringify({
+    t: "open", protocol: 2, game: "Nebula", version: "1", name: "Room", max: 4, candidates: ["198.51.100.7:61000"],
+    ...extra,
+  }));
+  const shown = open2({ public: true });
+  assert.ok(shown !== null && shown.t === "open" && shown.listed && shown.password === "", "a public room");
+  const locked = open2({ public: true, password: "pw" });
+  assert.ok(locked !== null && locked.t === "open" && locked.listed && locked.password === "pw",
+            "a public room with a password");
+  assert.equal(open2({ public: "yes" }), null, "public is true or false");
   assert.deepEqual(parseHostMessage('{"t":"update","players":3}'), { t: "update", update: { players: 3 } });
   assert.deepEqual(parseHostMessage('{"t":"update","name":"New","description":""}'),
                    { t: "update", update: { name: "New", description: "" } });

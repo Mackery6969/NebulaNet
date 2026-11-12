@@ -18,5 +18,16 @@
     { "tag": "v1", "new_sqlite_classes": ["RoomObject"] },
     { "tag": "v2", "new_sqlite_classes": ["LobbyDirectory"] }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Workers Builds' branch Previews (npx wrangler preview): each gets its own Durable Object namespaces, so a branch
+  // never touches production's rooms. The bindings are repeated because the code reads them from env; secrets (TURN)
+  // aren't inherited, so Previews hand out STUN only.
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        { "name": "ROOMS", "class_name": "RoomObject" },
+        { "name": "LOBBIES", "class_name": "LobbyDirectory" }
+      ]
+    }
+  }
 }
